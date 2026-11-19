@@ -1,0 +1,12 @@
+# Keep secrets and anything not needed at runtime out of the build context,
+# so they can never end up baked into an image layer.
+.env
+.env.*
+.git
+.github
+k8s
+test
+node_modules
+*.log
+docker-compose.yml
+*.md
