@@ -2,7 +2,11 @@
 # @v4) so a compromised or re-tagged action can't silently change what runs
 # in this pipeline. Each SHA was verified against the action's repository
 # with `git ls-remote --tags <repo>` on 2026-11-19 and is commented with the
-# tag it corresponds to.
+# tag it corresponds to. Note: a tag can be "annotated" (the tag itself is a
+# Git object, separate from the commit it points at) - `git ls-remote` then
+# prints two lines for it, and the one ending in `^{}` is the real commit.
+# Pin to that one, not the first line, or you pin to the tag object instead
+# of the code.
 name: build-and-deploy
 
 on:
@@ -14,10 +18,6 @@ on:
 # and only what it actually needs - see its own `permissions:` block.
 permissions:
   contents: read
-
-concurrency:
-  group: stockdesk-deploy
-  cancel-in-progress: false
 
 jobs:
   test:
@@ -53,9 +53,17 @@ jobs:
         uses: gitleaks/gitleaks-action@e0c47f4f8be36e29cdc102c57e68cb5cbf0e8d1e # v3.0.0, verified 2026-11-19
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Required by gitleaks-action for organisation-owned repositories
+          # (Corvane is one) - without it the action refuses to run at all.
+          # Free to request from gitleaks.io; stored as a repo/org secret.
+          # See README.md's "Secrets this pipeline expects".
+          GITLEAKS_LICENSE: ${{ secrets.GITLEAKS_LICENSE }}
+        # .gitleaksignore lists the fingerprints of the known, already-leaked
+        # values from the original delivery (see RISKS.md) so this step
+        # fails on any NEW secret, not forever on history that can't change.
 
       - name: Scan Dockerfile and Kubernetes manifests for misconfigurations
-        uses: aquasecurity/trivy-action@a9c7b0f06e461e9d4b4d1711f154ee024b8d7ab8 # v0.36.0, verified 2026-11-19
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0, verified 2026-11-19 (commit, not the annotated tag object)
         with:
           scan-type: config
           scan-ref: .
@@ -68,6 +76,11 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     environment: production
+    concurrency:
+      # Only the deploy itself needs to be serialized; test/security-scan on
+      # PRs should run independently and not queue behind each other.
+      group: stockdesk-deploy
+      cancel-in-progress: false
     permissions:
       contents: read
     env:
@@ -82,7 +95,7 @@ jobs:
         run: docker build -t "$REGISTRY/$IMAGE:${{ github.sha }}" .
 
       - name: Scan the built image for known vulnerabilities
-        uses: aquasecurity/trivy-action@a9c7b0f06e461e9d4b4d1711f154ee024b8d7ab8 # v0.36.0, verified 2026-11-19
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0, verified 2026-11-19 (commit, not the annotated tag object)
         with:
           scan-type: image
           image-ref: "${{ env.REGISTRY }}/${{ env.IMAGE }}:${{ github.sha }}"
@@ -91,7 +104,7 @@ jobs:
           exit-code: "1"
 
       - name: Generate a software bill of materials (SBOM)
-        uses: aquasecurity/trivy-action@a9c7b0f06e461e9d4b4d1711f154ee024b8d7ab8 # v0.36.0, verified 2026-11-19
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0, verified 2026-11-19 (commit, not the annotated tag object)
         with:
           scan-type: image
           image-ref: "${{ env.REGISTRY }}/${{ env.IMAGE }}:${{ github.sha }}"
@@ -106,7 +119,15 @@ jobs:
           path: sbom.cyclonedx.json
 
       - name: Log in to the registry
-        run: echo "${{ secrets.REGISTRY_TOKEN }}" | docker login "$REGISTRY" -u "${{ secrets.REGISTRY_USER }}" --password-stdin
+        # Secrets are passed through env:, never interpolated with ${{ }}
+        # directly inside the shell string - same reasoning as removing the
+        # PR-title injection (see RISKS.md R6): a value containing a quote or
+        # a $ would otherwise be interpreted by the shell instead of treated
+        # as plain data.
+        env:
+          REGISTRY_USER: ${{ secrets.REGISTRY_USER }}
+          REGISTRY_TOKEN: ${{ secrets.REGISTRY_TOKEN }}
+        run: echo "$REGISTRY_TOKEN" | docker login "$REGISTRY" -u "$REGISTRY_USER" --password-stdin
 
       - name: Push the image
         run: docker push "$REGISTRY/$IMAGE:${{ github.sha }}"
@@ -122,34 +143,48 @@ jobs:
       # here in this file.
       - name: Set up kubectl
         uses: azure/setup-kubectl@bda439f5f36b99b262ebdcd3613869bddb064c8e # v5.2.0, verified 2026-11-19
+        with:
+          version: "v1.31.0" # TODO verify: match the cluster's Kubernetes version
 
       - name: Write the kubeconfig to a private temp file
+        env:
+          KUBECONFIG_CONTENT: ${{ secrets.KUBECONFIG }}
         run: |
           umask 077
-          echo "${{ secrets.KUBECONFIG }}" > "$RUNNER_TEMP/kubeconfig"
+          echo "$KUBECONFIG_CONTENT" > "$RUNNER_TEMP/kubeconfig"
           echo "KUBECONFIG=$RUNNER_TEMP/kubeconfig" >> "$GITHUB_ENV"
+
+      - name: Create the namespace
+        # Must happen before the Secret below, or the first-ever deploy
+        # fails with "namespaces 'stockdesk' not found".
+        run: kubectl apply -f k8s/namespace.yaml
 
       - name: Create or update the application Secret in the cluster
         # The Secret's values live only here, pulled from the GitHub
         # "production" environment secrets - never committed to Git.
+        env:
+          DB_HOST: ${{ secrets.DB_HOST }}
+          DB_PORT: ${{ secrets.DB_PORT }}
+          DB_USER: ${{ secrets.DB_USER }}
+          DB_PASSWORD: ${{ secrets.DB_PASSWORD }}
+          API_KEY: ${{ secrets.API_KEY }}
         run: |
           kubectl create secret generic stockdesk-env \
             --namespace stockdesk \
-            --from-literal=DB_HOST="${{ secrets.DB_HOST }}" \
-            --from-literal=DB_PORT="${{ secrets.DB_PORT }}" \
-            --from-literal=DB_USER="${{ secrets.DB_USER }}" \
-            --from-literal=DB_PASSWORD="${{ secrets.DB_PASSWORD }}" \
-            --from-literal=API_KEY="${{ secrets.API_KEY }}" \
+            --from-literal=DB_HOST="$DB_HOST" \
+            --from-literal=DB_PORT="$DB_PORT" \
+            --from-literal=DB_USER="$DB_USER" \
+            --from-literal=DB_PASSWORD="$DB_PASSWORD" \
+            --from-literal=API_KEY="$API_KEY" \
             --dry-run=client -o yaml | kubectl apply -f -
 
-      - name: Deploy the manifests
+      - name: Deploy the remaining manifests
         run: |
           # Work on a copy so the IMAGE_TAG placeholder in the repo file
           # itself never changes.
           mkdir -p "$RUNNER_TEMP/k8s"
           cp k8s/deployment.yaml "$RUNNER_TEMP/k8s/deployment.yaml"
           sed -i "s|IMAGE_TAG|${{ github.sha }}|g" "$RUNNER_TEMP/k8s/deployment.yaml"
-          kubectl apply -f k8s/namespace.yaml
           kubectl apply -f "$RUNNER_TEMP/k8s/deployment.yaml"
           kubectl apply -f k8s/networkpolicy.yaml
           kubectl apply -f k8s/pdb.yaml

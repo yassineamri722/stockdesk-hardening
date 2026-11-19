@@ -30,7 +30,10 @@ spec:
     - host: stockdesk.suppliers.corvane.example
       http:
         paths:
-          - path: /
+          # Only /api is exposed to suppliers - path "/" would also expose
+          # /health and /livez, which are operational endpoints meant to
+          # stay internal, not supplier-facing.
+          - path: /api
             pathType: Prefix
             backend:
               service:

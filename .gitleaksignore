@@ -1,0 +1,13 @@
+# Known, already-leaked values from the original delivery (commit 57cb1fc,
+# "chore: original repository as received") plus one accidental re-leak in
+# a later commit's test fixture (dfd8967, fixed in 3226516). Listed here only
+# so CI doesn't fail on every run over history that can't be changed anymore -
+# this file does NOT make these values safe. They are tracked in RISKS.md
+# under "Secrets already exposed" and MUST be rotated; .gitleaksignore is not
+# a substitute for rotation.
+57cb1fc795f4a3c7c752f979d738dfe9f470215c:.env:generic-api-key:7
+57cb1fc795f4a3c7c752f979d738dfe9f470215c:docker-compose.yml:generic-api-key:17
+57cb1fc795f4a3c7c752f979d738dfe9f470215c:k8s/secret.yaml:kubernetes-secret-yaml:2
+57cb1fc795f4a3c7c752f979d738dfe9f470215c:k8s/secret.yaml:generic-api-key:11
+57cb1fc795f4a3c7c752f979d738dfe9f470215c:k8s/secret.yaml:generic-api-key:12
+dfd8967687686576d5d392972f3c9539df5a75ef:test/server.test.js:generic-api-key:65
