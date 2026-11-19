@@ -55,7 +55,7 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Scan Dockerfile and Kubernetes manifests for misconfigurations
-        uses: aquasecurity/trivy-action@a9c7b0f06e461e9d4b4d1711f154ee024b8d7ab8 # v0.36.0, verified 2026-11-19
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0, verified 2026-11-19
         with:
           scan-type: config
           scan-ref: .
@@ -82,7 +82,7 @@ jobs:
         run: docker build -t "$REGISTRY/$IMAGE:${{ github.sha }}" .
 
       - name: Scan the built image for known vulnerabilities
-        uses: aquasecurity/trivy-action@a9c7b0f06e461e9d4b4d1711f154ee024b8d7ab8 # v0.36.0, verified 2026-11-19
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0, verified 2026-11-19
         with:
           scan-type: image
           image-ref: "${{ env.REGISTRY }}/${{ env.IMAGE }}:${{ github.sha }}"
@@ -91,7 +91,7 @@ jobs:
           exit-code: "1"
 
       - name: Generate a software bill of materials (SBOM)
-        uses: aquasecurity/trivy-action@a9c7b0f06e461e9d4b4d1711f154ee024b8d7ab8 # v0.36.0, verified 2026-11-19
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0, verified 2026-11-19
         with:
           scan-type: image
           image-ref: "${{ env.REGISTRY }}/${{ env.IMAGE }}:${{ github.sha }}"
