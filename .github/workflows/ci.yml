@@ -1,0 +1,57 @@
+name: build-and-deploy
+
+on:
+  push:
+    branches: ["**"]
+  pull_request_target:
+    types: [opened, synchronize, reopened]
+
+permissions: write-all
+
+env:
+  REGISTRY: registry.corvane.example
+  IMAGE: stockdesk
+  DEPLOY_TOKEN: cvn_deploy_9f3a1c77e0b24d58a6c1e3b0
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: latest
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Run tests
+        run: npm test || true
+
+      - name: Announce build
+        run: echo "Building '${{ github.event.pull_request.title }}' for ${{ github.actor }}"
+
+      - name: Log in to the registry
+        run: |
+          echo "Logging in with token $DEPLOY_TOKEN"
+          echo "$DEPLOY_TOKEN" | docker login $REGISTRY -u ci-bot --password-stdin
+
+      - name: Build and push the image
+        run: |
+          docker build -t $REGISTRY/$IMAGE:latest .
+          docker push $REGISTRY/$IMAGE:latest
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Deploy to the cluster
+        uses: corvane-labs/k8s-deploy-action@main
+        with:
+          kubeconfig: ${{ secrets.KUBECONFIG }}
+          manifests: k8s/

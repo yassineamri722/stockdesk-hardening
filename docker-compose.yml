@@ -1,0 +1,26 @@
+# Local and test-server stack for StockDesk.
+services:
+  app:
+    build: .
+    ports:
+      - "3000:3000"
+      - "9229:9229"
+    env_file: .env
+    depends_on:
+      - db
+    restart: always
+
+  db:
+    image: postgres:latest
+    environment:
+      POSTGRES_USER: stockdesk
+      POSTGRES_PASSWORD: Sd-prod-2024-Zk93qP
+      POSTGRES_DB: stockdesk
+    ports:
+      - "5432:5432"
+    volumes:
+      - dbdata:/var/lib/postgresql/data
+    restart: always
+
+volumes:
+  dbdata:
