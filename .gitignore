@@ -1,2 +1,7 @@
 node_modules
 *.log
+
+# Real secrets must never be committed. .env.example stays tracked as a template.
+.env
+.env.*
+!.env.example
