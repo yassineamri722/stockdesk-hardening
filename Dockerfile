@@ -1,7 +1,7 @@
 # Pinned to a specific Node 20 LTS Alpine tag instead of "latest" so builds are
 # reproducible and we know exactly what we're shipping.
 # TODO verify digest: pin with FROM node:20-alpine@sha256:... once verified
-FROM node:20-alpine
+FROM node:26-alpine
 
 WORKDIR /app
 
