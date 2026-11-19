@@ -1,0 +1,15 @@
+# Dedicated namespace so StockDesk is isolated from other workloads on the
+# shared cluster, instead of living in "default" with everyone else.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: stockdesk
+  labels:
+    # Pod Security Admission: ask the cluster to reject any pod in this
+    # namespace that doesn't meet the "restricted" profile (no root, no
+    # privilege escalation, no host access, etc).
+    # TODO verify: confirm Pod Security Admission is actually enabled and
+    # enforced on this cluster - these labels only work if the admission
+    # controller is turned on.
+    pod-security.kubernetes.io/enforce: restricted
+    pod-security.kubernetes.io/enforce-version: latest
