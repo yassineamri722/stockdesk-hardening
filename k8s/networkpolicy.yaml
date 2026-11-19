@@ -1,0 +1,54 @@
+# Default-deny: with no other policy, Kubernetes allows all pod-to-pod and
+# pod-to-Internet traffic in a namespace. This blocks everything first, then
+# the second policy below opens only what StockDesk actually needs.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny-all
+  namespace: stockdesk
+spec:
+  podSelector: {}
+  policyTypes:
+    - Ingress
+    - Egress
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: stockdesk-allow
+  namespace: stockdesk
+spec:
+  podSelector:
+    matchLabels:
+      app: stockdesk
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              # Placeholder label for the ingress controller's namespace.
+              # TODO verify: replace with the real label used on this
+              # cluster (e.g. kubernetes.io/metadata.name: ingress-nginx)
+              # once the entry path for suppliers is decided.
+              kubernetes.io/metadata.name: ingress-controller-namespace
+      ports:
+        - protocol: TCP
+          port: 3000
+  egress:
+    # DNS, needed to resolve the database hostname and any other service name.
+    - to: []
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+    # PostgreSQL. Left open to any destination on this port rather than a
+    # specific pod/namespace because the DB's exact location isn't confirmed.
+    # TODO verify: narrow this to the real DB pod/namespace or external IP
+    # once known.
+    - to: []
+      ports:
+        - protocol: TCP
+          port: 5432

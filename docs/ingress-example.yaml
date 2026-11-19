@@ -1,0 +1,39 @@
+# RECOMMENDATION, NOT APPLIED BY CI (this file lives in docs/, the pipeline
+# only applies k8s/).
+#
+# How external suppliers should reach StockDesk once that's decided: through
+# an Ingress controller with TLS, in front of the ClusterIP Service from
+# k8s/deployment.yaml - never by exposing the Service directly on the
+# Internet (that's what led to the Node inspector being reachable in the
+# original setup).
+#
+# Still needed before this can be used for real:
+# - decide/confirm which Ingress controller is installed on the cluster
+# - a real hostname and a TLS certificate (e.g. via cert-manager)
+# - per-supplier API keys and rate limiting (see THREAT-NOTE.md)
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: stockdesk
+  namespace: stockdesk
+  annotations:
+    # TODO verify: confirm the ingress class and cert-manager issuer actually
+    # available on this cluster.
+    cert-manager.io/cluster-issuer: letsencrypt-prod
+spec:
+  ingressClassName: nginx # TODO verify: replace with the real ingress class
+  tls:
+    - hosts:
+        - stockdesk.suppliers.corvane.example # TODO verify: real hostname
+      secretName: stockdesk-tls
+  rules:
+    - host: stockdesk.suppliers.corvane.example
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: stockdesk
+                port:
+                  name: http

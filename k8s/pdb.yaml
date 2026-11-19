@@ -1,0 +1,13 @@
+# Keeps at least 1 pod running during voluntary disruptions (node drains,
+# cluster upgrades) so a maintenance operation on the shared cluster can't
+# take StockDesk fully down by evicting both replicas at once.
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: stockdesk
+  namespace: stockdesk
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app: stockdesk
