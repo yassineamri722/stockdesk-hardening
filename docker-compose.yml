@@ -1,26 +1,33 @@
-# Local and test-server stack for StockDesk.
+# Local development only - never run this on a shared or production server.
+# It publishes the database port to the host and uses whatever is in your
+# local .env (copied from .env.example), which is fine for a laptop but not
+# for anything reachable by other people.
 services:
   app:
     build: .
     ports:
-      - "3000:3000"
-      - "9229:9229"
+      # Bound to 127.0.0.1 only: reachable from this machine, not the network.
+      - "127.0.0.1:3000:3000"
     env_file: .env
     depends_on:
       - db
-    restart: always
+    restart: unless-stopped
 
   db:
-    image: postgres:latest
+    image: postgres:16-alpine # TODO verify digest
     environment:
-      POSTGRES_USER: stockdesk
-      POSTGRES_PASSWORD: Sd-prod-2024-Zk93qP
+      POSTGRES_USER: ${DB_USER}
+      # Read from .env instead of a value hardcoded here - this file is
+      # committed to Git, .env is not (see .gitignore).
+      POSTGRES_PASSWORD: ${DB_PASSWORD}
       POSTGRES_DB: stockdesk
     ports:
-      - "5432:5432"
+      # Bound to 127.0.0.1 only, so the database is never reachable from
+      # outside this machine.
+      - "127.0.0.1:5432:5432"
     volumes:
       - dbdata:/var/lib/postgresql/data
-    restart: always
+    restart: unless-stopped
 
 volumes:
   dbdata:
