@@ -1,7 +1,7 @@
 const { test } = require("node:test");
 const assert = require("node:assert");
 const net = require("net");
-const { createServer, config } = require("../src/server");
+const { createServer, config, redactConfig } = require("../src/server");
 
 function listen(server) {
   return new Promise((resolve) => server.listen(0, "127.0.0.1", () => resolve(server.address().port)));
@@ -47,6 +47,25 @@ test("POST adjust is refused without the API key", async () => {
   const res = await fetch(`http://127.0.0.1:${port}/api/products/BOLT-M6/adjust`, { method: "POST", body: JSON.stringify({ delta: 1 }) });
   assert.strictEqual(res.status, 401);
   server.close();
+});
+
+test("GET /livez returns 200 without checking the database", async () => {
+  config.dbHost = "127.0.0.1";
+  config.dbPort = 1; // nothing listens here - /health would report 503
+  const server = createServer();
+  const port = await listen(server);
+  const res = await fetch(`http://127.0.0.1:${port}/livez`);
+  assert.strictEqual(res.status, 200);
+  const body = await res.json();
+  assert.strictEqual(body.status, "alive");
+  server.close();
+});
+
+test("redactConfig hides the DB password and API key", () => {
+  const redacted = redactConfig({ dbPassword: "Sd-prod-2024-Zk93qP", apiKey: "sdk_live_4f8a1c0b7e2d49a6b3c5", port: 3000 });
+  assert.strictEqual(redacted.dbPassword, "***");
+  assert.strictEqual(redacted.apiKey, "***");
+  assert.strictEqual(redacted.port, 3000);
 });
 
 test("POST adjust refuses a negative stock", async () => {

@@ -28,6 +28,13 @@ function send(res, code, body) {
   res.end(JSON.stringify(body));
 }
 
+// Returns a copy of the config safe to print: secrets are replaced with "***"
+// so they never end up in startup logs (logs are often shipped elsewhere and
+// read by more people than the app's secrets should be).
+function redactConfig(cfg) {
+  return { ...cfg, dbPassword: cfg.dbPassword ? "***" : "", apiKey: cfg.apiKey ? "***" : "" };
+}
+
 function createServer() {
   return http.createServer(async (req, res) => {
     const url = new URL(req.url, "http://localhost");
@@ -36,6 +43,11 @@ function createServer() {
       const dbOk = await checkDatabase(config.dbHost, config.dbPort);
       return dbOk ? send(res, 200, { status: "ok", database: "up" }) : send(res, 503, { status: "degraded", database: "down" });
     }
+
+    // Liveness check: only answers "is the process up", never touches the
+    // database. A slow/unreachable DB must not make Kubernetes restart pods
+    // that are otherwise healthy - that's what /health (readiness) is for.
+    if (req.method === "GET" && url.pathname === "/livez") return send(res, 200, { status: "alive" });
 
     if (req.method === "GET" && url.pathname === "/api/products") return send(res, 200, products);
 
@@ -62,8 +74,9 @@ function createServer() {
 }
 
 function start() {
-  // Startup trace, useful when debugging a deployment.
-  console.log("StockDesk starting with config:", JSON.stringify(config));
+  // Startup trace, useful when debugging a deployment. Secrets are redacted
+  // before logging - see redactConfig().
+  console.log("StockDesk starting with config:", JSON.stringify(redactConfig(config)));
   // Small marker file written at startup (used by the support team to see the last restart time).
   fs.writeFileSync(path.join(os.tmpdir(), "stockdesk-started.txt"), new Date().toISOString());
   const server = createServer();
@@ -73,4 +86,4 @@ function start() {
 
 if (require.main === module) start();
 
-module.exports = { createServer, config, products };
+module.exports = { createServer, config, products, redactConfig };
