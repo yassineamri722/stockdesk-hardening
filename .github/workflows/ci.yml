@@ -1,57 +1,156 @@
+# Actions below are pinned to a full commit SHA (not a mutable tag like
+# @v4) so a compromised or re-tagged action can't silently change what runs
+# in this pipeline. Each SHA was verified against the action's repository
+# with `git ls-remote --tags <repo>` on 2026-11-19 and is commented with the
+# tag it corresponds to.
 name: build-and-deploy
 
 on:
+  pull_request: {}
   push:
-    branches: ["**"]
-  pull_request_target:
-    types: [opened, synchronize, reopened]
+    branches: [main]
 
-permissions: write-all
+# Read-only by default. Only the release job (deploy from main) gets more,
+# and only what it actually needs - see its own `permissions:` block.
+permissions:
+  contents: read
 
-env:
-  REGISTRY: registry.corvane.example
-  IMAGE: stockdesk
-  DEPLOY_TOKEN: cvn_deploy_9f3a1c77e0b24d58a6c1e3b0
+concurrency:
+  group: stockdesk-deploy
+  cancel-in-progress: false
 
 jobs:
-  build:
-    runs-on: ubuntu-latest
+  test:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1, verified 2026-11-19
         with:
-          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0, verified 2026-11-19
         with:
-          node-version: latest
+          node-version: "20"
 
-      - name: Install dependencies
-        run: npm install
-
+      # No dependencies declared and no package-lock.json committed, so
+      # there is nothing to install (see Dockerfile for the same note).
       - name: Run tests
-        run: npm test || true
+        run: npm test
 
-      - name: Announce build
-        run: echo "Building '${{ github.event.pull_request.title }}' for ${{ github.actor }}"
+  security-scan:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1, verified 2026-11-19
+        with:
+          persist-credentials: false
+          # Full history, not just the latest commit: gitleaks scans commits,
+          # not just the working tree, so it can catch a secret that was
+          # added and later removed but still sits in an old commit.
+          fetch-depth: 0
+
+      - name: Scan git history for secrets
+        uses: gitleaks/gitleaks-action@e0c47f4f8be36e29cdc102c57e68cb5cbf0e8d1e # v3.0.0, verified 2026-11-19
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Scan Dockerfile and Kubernetes manifests for misconfigurations
+        uses: aquasecurity/trivy-action@a9c7b0f06e461e9d4b4d1711f154ee024b8d7ab8 # v0.36.0, verified 2026-11-19
+        with:
+          scan-type: config
+          scan-ref: .
+          severity: HIGH,CRITICAL
+          exit-code: "1"
+
+  release:
+    needs: [test, security-scan]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    environment: production
+    permissions:
+      contents: read
+    env:
+      REGISTRY: registry.corvane.example
+      IMAGE: stockdesk
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1, verified 2026-11-19
+        with:
+          persist-credentials: false
+
+      - name: Build the image, tagged with the commit SHA
+        run: docker build -t "$REGISTRY/$IMAGE:${{ github.sha }}" .
+
+      - name: Scan the built image for known vulnerabilities
+        uses: aquasecurity/trivy-action@a9c7b0f06e461e9d4b4d1711f154ee024b8d7ab8 # v0.36.0, verified 2026-11-19
+        with:
+          scan-type: image
+          image-ref: "${{ env.REGISTRY }}/${{ env.IMAGE }}:${{ github.sha }}"
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          exit-code: "1"
+
+      - name: Generate a software bill of materials (SBOM)
+        uses: aquasecurity/trivy-action@a9c7b0f06e461e9d4b4d1711f154ee024b8d7ab8 # v0.36.0, verified 2026-11-19
+        with:
+          scan-type: image
+          image-ref: "${{ env.REGISTRY }}/${{ env.IMAGE }}:${{ github.sha }}"
+          format: cyclonedx
+          output: sbom.cyclonedx.json
+          exit-code: "0"
+
+      - name: Upload the SBOM as a build artifact
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2, verified 2026-11-19
+        with:
+          name: sbom-${{ github.sha }}
+          path: sbom.cyclonedx.json
 
       - name: Log in to the registry
+        run: echo "${{ secrets.REGISTRY_TOKEN }}" | docker login "$REGISTRY" -u "${{ secrets.REGISTRY_USER }}" --password-stdin
+
+      - name: Push the image
+        run: docker push "$REGISTRY/$IMAGE:${{ github.sha }}"
+
+      # The original pipeline used corvane-labs/k8s-deploy-action@main: a
+      # third-party action, not owned by us, pinned to a mutable branch
+      # (@main can change its code at any time) and never audited. Handing
+      # it our cluster credentials (KUBECONFIG) would mean trusting whatever
+      # that action's maintainer - or anyone who compromises their repo -
+      # chooses to run with cluster-admin-equivalent access. Using the
+      # official, well-known azure/setup-kubectl action plus plain `kubectl`
+      # commands we write ourselves keeps every command we run visible right
+      # here in this file.
+      - name: Set up kubectl
+        uses: azure/setup-kubectl@bda439f5f36b99b262ebdcd3613869bddb064c8e # v5.2.0, verified 2026-11-19
+
+      - name: Write the kubeconfig to a private temp file
         run: |
-          echo "Logging in with token $DEPLOY_TOKEN"
-          echo "$DEPLOY_TOKEN" | docker login $REGISTRY -u ci-bot --password-stdin
+          umask 077
+          echo "${{ secrets.KUBECONFIG }}" > "$RUNNER_TEMP/kubeconfig"
+          echo "KUBECONFIG=$RUNNER_TEMP/kubeconfig" >> "$GITHUB_ENV"
 
-      - name: Build and push the image
+      - name: Create or update the application Secret in the cluster
+        # The Secret's values live only here, pulled from the GitHub
+        # "production" environment secrets - never committed to Git.
         run: |
-          docker build -t $REGISTRY/$IMAGE:latest .
-          docker push $REGISTRY/$IMAGE:latest
+          kubectl create secret generic stockdesk-env \
+            --namespace stockdesk \
+            --from-literal=DB_HOST="${{ secrets.DB_HOST }}" \
+            --from-literal=DB_PORT="${{ secrets.DB_PORT }}" \
+            --from-literal=DB_USER="${{ secrets.DB_USER }}" \
+            --from-literal=DB_PASSWORD="${{ secrets.DB_PASSWORD }}" \
+            --from-literal=API_KEY="${{ secrets.API_KEY }}" \
+            --dry-run=client -o yaml | kubectl apply -f -
 
-  deploy:
-    needs: build
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Deploy to the cluster
-        uses: corvane-labs/k8s-deploy-action@main
-        with:
-          kubeconfig: ${{ secrets.KUBECONFIG }}
-          manifests: k8s/
+      - name: Deploy the manifests
+        run: |
+          # Work on a copy so the IMAGE_TAG placeholder in the repo file
+          # itself never changes.
+          mkdir -p "$RUNNER_TEMP/k8s"
+          cp k8s/deployment.yaml "$RUNNER_TEMP/k8s/deployment.yaml"
+          sed -i "s|IMAGE_TAG|${{ github.sha }}|g" "$RUNNER_TEMP/k8s/deployment.yaml"
+          kubectl apply -f k8s/namespace.yaml
+          kubectl apply -f "$RUNNER_TEMP/k8s/deployment.yaml"
+          kubectl apply -f k8s/networkpolicy.yaml
+          kubectl apply -f k8s/pdb.yaml
+          kubectl rollout status deployment/stockdesk --namespace stockdesk --timeout=120s
