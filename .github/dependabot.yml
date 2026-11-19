@@ -1,0 +1,22 @@
+version: 2
+updates:
+  # Keeps the pinned commit SHAs in ci.yml up to date with a PR when the
+  # actions we use release a new version.
+  - package-ecosystem: github-actions
+    directory: "/"
+    schedule:
+      interval: weekly
+
+  # Keeps the base image in Dockerfile up to date (e.g. node:20-alpine
+  # patch releases).
+  - package-ecosystem: docker
+    directory: "/"
+    schedule:
+      interval: weekly
+
+  # No dependencies today, but this activates automatically if any get
+  # added to package.json later.
+  - package-ecosystem: npm
+    directory: "/"
+    schedule:
+      interval: weekly
