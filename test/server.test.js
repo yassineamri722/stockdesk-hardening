@@ -62,7 +62,7 @@ test("GET /livez returns 200 without checking the database", async () => {
 });
 
 test("redactConfig hides the DB password and API key", () => {
-  const redacted = redactConfig({ dbPassword: "Sd-prod-2024-Zk93qP", apiKey: "sdk_live_4f8a1c0b7e2d49a6b3c5", port: 3000 });
+  const redacted = redactConfig({ dbPassword: "change-me-password", apiKey: "change-me-api-key", port: 3000 });
   assert.strictEqual(redacted.dbPassword, "***");
   assert.strictEqual(redacted.apiKey, "***");
   assert.strictEqual(redacted.port, 3000);
